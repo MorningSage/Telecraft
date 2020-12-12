@@ -31,3 +31,7 @@ bin/
 # fabric
 
 run/
+
+# Generated TL content
+
+/src/generated/

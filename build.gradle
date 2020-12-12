@@ -3,8 +3,7 @@ plugins {
 	id 'maven-publish'
 }
 
-sourceCompatibility = JavaVersion.VERSION_1_8
-targetCompatibility = JavaVersion.VERSION_1_8
+sourceCompatibility = targetCompatibility = JavaVersion.VERSION_1_8
 
 archivesBaseName = project.archives_base_name
 version = project.mod_version
@@ -16,6 +15,9 @@ dependencies {
 	mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
 	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
+	compileOnly 'org.projectlombok:lombok:1.18.16'
+	annotationProcessor 'org.projectlombok:lombok:1.18.16'
+
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
@@ -23,11 +25,36 @@ dependencies {
 	// You may need to force-disable transitiveness on them.
 }
 
+sourceSets {
+	main {
+		resources {
+			srcDir 'src/generated/resources'
+		}
+	}
+	datagen {
+		compileClasspath += sourceSets.main.output
+		runtimeClasspath += sourceSets.main.output
+	}
+	test {
+		compileClasspath += sourceSets.main.output
+		runtimeClasspath += sourceSets.main.output
+	}
+}
+
+configurations {
+	datagenCompile.extendsFrom(compileClasspath)
+}
+
 processResources {
 	inputs.property "version", project.version
 
-	filesMatching("fabric.mod.json") {
+	from(sourceSets.main.resources.srcDirs) {
+		include "fabric.mod.json"
 		expand "version": project.version
+	}
+
+	from(sourceSets.main.resources.srcDirs) {
+		exclude "fabric.mod.json"
 	}
 }
 
@@ -55,8 +82,23 @@ java {
 }
 
 jar {
+	from sourceSets.main.output.classesDirs
+	from sourceSets.main.output.resourcesDir
+
 	from("LICENSE") {
 		rename { "${it}_${project.archivesBaseName}"}
+	}
+
+	manifest {
+		attributes([
+			"Specification-Title": "Telecraft",
+			"Specification-Vendor": "MorningSage",
+			"Specification-Version": "${project.version}",
+			"Implementation-Title": "${project.name}",
+			"Implementation-Version": "${project.version}",
+			"Implementation-Vendor" :"MorningSage",
+			"Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+		])
 	}
 }
 
@@ -79,4 +121,14 @@ publishing {
 	repositories {
 		// See https://docs.gradle.org/current/userguide/publishing_maven.html for information on how to set up publishing.
 	}
+}
+
+import net.fabricmc.loom.task.RunClientTask;
+
+// Custom task
+task generateData(type: RunClientTask, dependsOn: downloadAssets, group: "telecraft", description: "Generates the TLObjects for a given api layer") {
+	classpath = configurations.runtimeClasspath
+	classpath sourceSets.main.output
+	classpath sourceSets.datagen.output
+	systemProperty "telecraft.generateData", "true"
 }

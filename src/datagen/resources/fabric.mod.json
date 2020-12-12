@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "telecraftdatagen",
+  "version": "${version}",
+  "name": "Telecraft Datagen",
+  "description": "Generates the TLObjects for a given api layer",
+  "authors": [
+    "MorningSage"
+  ],
+  "contact": {
+    "homepage": "https://telegram.org/",
+    "sources": "https://github.com/MorningSage/Telecraft"
+  },
+  "license": "CC0-1.0",
+  "environment": "client",
+  "entrypoints": {
+    "preLaunch": [
+      "morningsage.telecraft.data.Entrypoint"
+    ]
+  }
+}
+
+
