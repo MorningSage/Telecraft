@@ -14,6 +14,8 @@ import org.jetbrains.annotations.Nullable;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Builder(builderClassName = "Builder")
 public class ParsedTLObject {
@@ -136,11 +138,11 @@ public class ParsedTLObject {
     }
     public boolean isAbstractClass(Collection<ParsedTLObject> values) {
         if (isExtended == null) {
-            String safeClassName = getClassName(getName()).toLowerCase();
+            String safeClassName = formatClassName(getName()).toLowerCase();
 
             for (ParsedTLObject object : values) {
                 if (object.getCollectionType() == TLType.METHOD || !object.extendsAbstractClass()) continue;
-                if (object.getReturnType().toLowerCase().equals(safeClassName)) {
+                if (formatClassName(object.getReturnType()).toLowerCase().equals(safeClassName)) {
                     isExtended = true;
                     break;
                 }
@@ -196,11 +198,7 @@ public class ParsedTLObject {
         if (input.contains("<")) input = input.substring(0, input.indexOf("<"));
         final String[] matches = input.split("\\.");
 
-        if (input.contains("_")) {
-            return CaseFormat.LOWER_UNDERSCORE.to(CaseFormat.UPPER_CAMEL, matches[matches.length - 1]);
-        } else {
-            return StringUtils.capitalize(matches[matches.length - 1]);
-        }
+        return formatClassName(matches[matches.length - 1]);
     }
     public static String getFieldName(String input) {
         final String[] matches = input.split("\\.");
@@ -211,6 +209,38 @@ public class ParsedTLObject {
             return matches[matches.length - 1];
         }
     }
+    public static String formatSnakeGenerics(String input) {
+        // Specifically match a generic
+        String genericPattern = "<(\\w+_\\w+)>";
+        Pattern compiledPattern = Pattern.compile(genericPattern);
+        Matcher matcher = compiledPattern.matcher(input);
+
+        // Matches this input
+        if (matcher.find()) {
+            String matched = matcher.group(1);
+            Matcher innerMatcher = compiledPattern.matcher(matched);
+
+            // Matches a match (nested Generics like Vector<Vector<future_salts>>)
+            if (innerMatcher.find()) {
+                // Recursive calls to match (almost) unlimited nests
+                return formatSnakeGenerics(matched);
+            }
+
+            // Update the input
+            input = matcher.replaceFirst("<" + ParsedTLObject.getClassName(matched) + ">");
+        }
+
+        // Return the input (changed or original)
+        return input;
+    }
+    public static String formatClassName(String input) {
+        if (input.contains("_")) {
+            return CaseFormat.LOWER_UNDERSCORE.to(CaseFormat.UPPER_CAMEL, input);
+        } else {
+            return StringUtils.capitalize(input);
+        }
+    }
+
 
     public String getHexID() {
         return "0x" + Integer.toHexString(id).toUpperCase();

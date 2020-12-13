@@ -262,33 +262,8 @@ public class ParamPair {
         formattedType = formattedType.replace("int128", "BigInteger");
         formattedType = formattedType.replace("int256", "BigInteger");
 
-        formattedType = formatSnakeGenerics(formattedType);
+        formattedType = ParsedTLObject.formatSnakeGenerics(formattedType);
 
         return formattedType;
-    }
-
-    private static String formatSnakeGenerics(String input) {
-        // Specifically match a generic
-        String genericPattern = "<(\\w+_\\w+)>";
-        Pattern compiledPattern = Pattern.compile(genericPattern);
-        Matcher matcher = compiledPattern.matcher(input);
-
-        // Matches this input
-        if (matcher.find()) {
-            String matched = matcher.group(1);
-            Matcher innerMatcher = compiledPattern.matcher(matched);
-
-            // Matches a match (nested Generics like Vector<Vector<future_salts>>)
-            if (innerMatcher.find()) {
-                // Recursive calls to match (almost) unlimited nests
-                return formatSnakeGenerics(matched);
-            }
-
-            // Update the input
-            input = matcher.replaceFirst("<" + ParsedTLObject.getClassName(matched) + ">");
-        }
-
-        // Return the input (changed or original)
-        return input;
     }
 }
