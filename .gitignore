@@ -35,3 +35,4 @@ run/
 # Generated TL content
 
 /src/generated/
+/src/main/java/morningsage/telecraft/tlobjects/

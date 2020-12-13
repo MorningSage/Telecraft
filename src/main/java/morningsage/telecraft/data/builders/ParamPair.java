@@ -4,6 +4,7 @@ import lombok.Data;
 
 import java.text.MessageFormat;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -56,15 +57,18 @@ public class ParamPair {
         }
     }
 
-    public void declareParam(StringBuilder classText, String classPackage, String parentClassName) {
+    public void declareParam(StringBuilder classText, String classPackage, String parentClassName, Collection<ParsedTLObject> values) {
         // No access to flags directly
         if (getName().equals("flags")) return;
+
+        String typeString = getTypeString(false, classPackage, parentClassName).get(0);
+
+        // ToDo: determine if raw and append "<?>" if necessary
 
         classText.append(
             MessageFormat.format(
                 "\t@Getter @Setter private {0} {1};\n",
-                getTypeString(false, classPackage, parentClassName).get(0),
-                ParsedTLObject.getFieldName(getName())
+                typeString, ParsedTLObject.getFieldName(getName())
             )
         );
     }
@@ -242,7 +246,10 @@ public class ParamPair {
         return name;
     }
 
-    public String getType() {
+
+    public String getType(boolean formatted) {
+        if (!formatted) return type;
+
         String formattedType = type;
 
         // Fix vector<%Message>
@@ -265,5 +272,9 @@ public class ParamPair {
         formattedType = ParsedTLObject.formatSnakeGenerics(formattedType);
 
         return formattedType;
+    }
+
+    public String getType() {
+        return getType(true);
     }
 }

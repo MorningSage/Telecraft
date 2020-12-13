@@ -10,7 +10,13 @@ import morningsage.telecraft.data.utils.FileUtils;
 import net.minecraft.data.DataCache;
 import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.Nullable;
+import org.reflections.Reflections;
 
+import java.io.DataInputStream;
+import java.io.IOException;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
@@ -60,10 +66,8 @@ public class ParsedTLObject {
         for (String importLine : imports) {
             classText.append("import ").append(importLine).append("\n");
         }
-        classText.append("\npublic ");
-        if (isExtended) classText.append("abstract ");
-        classText.append("class ").append(className);
-        if (id == 0x1CB5C415) classText.append("<T>");
+        classText.append("\npublic class ").append(className);
+        if (isVector()) classText.append("<T>");
         if (isExtended) classText.append("<T extends ").append(className).append("<T>>");
         if (hasExtends) {
             classText.append(" extends ").append(getClassName(returnType)).append("<").append(className).append(">");
@@ -74,14 +78,16 @@ public class ParsedTLObject {
             } else {
                 classText.append(className);
             }
-            if (id == 0x1CB5C415) classText.append("<T>");
+            if (isVector()) classText.append("<T>");
             classText.append(">");
         }
         classText.append(" {\n\t@Getter private static final int ID = ").append(getHexID()).append(";\n\n");
-        for (ParamPair param : params) {
-            param.declareParam(classText, classPath, className);
+        if (params.size() > 0) {
+            for (ParamPair param : params) {
+                param.declareParam(classText, classPath, className, values);
+            }
+            classText.append("\n");
         }
-        classText.append("\n");
         addDeserializationLogic(classText, values);
         classText.append("\n\n");
         addSerializationLogic(classText);
@@ -119,13 +125,70 @@ public class ParsedTLObject {
             final StringBuilder classText = new StringBuilder();
 
             classText.append("package morningsage.telecraft.tlobjects;\n\n");
+            classText.append("import org.reflections.Reflections;\n");
             classText.append("import java.io.DataInputStream;\n");
             classText.append("import java.io.DataOutputStream;\n");
-            classText.append("\npublic abstract class TLObject<T extends TLObject<T>> {\n");
+            classText.append("import java.io.IOException;\n");
+            classText.append("import java.lang.reflect.Constructor;\n");
+            classText.append("import java.lang.reflect.InvocationTargetException;\n");
+            classText.append("import java.lang.reflect.Method;\n");
+            classText.append("import java.util.HashMap;\n");
+            classText.append("import java.util.Set;\n");
+            classText.append("import javax.annotation.Nullable;\n\n");
+            classText.append("public abstract class TLObject<T extends TLObject<T>> {\n");
+            classText.append("\tprivate static final HashMap<Integer, Class<?>> ID_MAP = new HashMap<>();\n\n");
             classText.append("\tpublic abstract T deserialize(DataInputStream data);\n");
-            classText.append("\tpublic abstract DataOutputStream serialize(DataOutputStream data);\n");
-            classText.append("\tpublic static <TLOBJECT extends TLObject<TLOBJECT>> TLOBJECT asdf(Class<? super TLOBJECT> clazz, DataInputStream data) {\n\n\t}");
-
+            classText.append("\tpublic abstract DataOutputStream serialize(DataOutputStream data);\n\n");
+            classText.append("\tprivate static void refreshObjectMap() {\n");
+            classText.append("\t\tID_MAP.clear();\n\n");
+            classText.append("\t\t@SuppressWarnings(\"rawtypes\")\n");
+            classText.append("\t\tSet<Class<? extends TLObject>> subTypes = new Reflections(\"morningsage.telecraft.tlobjects\").getSubTypesOf(TLObject.class);\n\n");
+            classText.append("\t\tfor (Class<?> clazz : subTypes) {\n");
+            classText.append("\t\t\ttry {\n");
+            classText.append("\t\t\t\tfor (Method method : clazz.getMethods()) {\n");
+            classText.append("\t\t\t\t\tif (method.getName().equals(\"getID\") && method.getReturnType() == int.class) {\n");
+            classText.append("\t\t\t\t\t\tID_MAP.put((int) method.invoke(null), clazz);\n");
+            classText.append("\t\t\t\t\t}\n");
+            classText.append("\t\t\t\t}\n");
+            classText.append("\t\t\t} catch (Exception ignored) { }\n");
+            classText.append("\t\t}\n");
+            classText.append("\t}\n\n");
+            classText.append("\t@Nullable @SuppressWarnings(\"unchecked\")\n");
+            classText.append("\tpublic static TLObject<?> deserializeObject(DataInputStream data) {\n");
+            classText.append("\t\tif (ID_MAP.isEmpty()) refreshObjectMap();\n");
+            classText.append("\t\tException error;\n");
+            classText.append("\t\tint id = -1;\n");
+            classText.append("\t\tClass<? extends TLObject<?>> clazz = null;\n\n");
+            classText.append("\t\ttry {\n");
+            classText.append("\t\t\tid = data.readInt();\n");
+            classText.append("\t\t\tclazz = (Class<? extends TLObject<?>>) ID_MAP.get(id);\n");
+            classText.append("\t\t\tConstructor<? extends TLObject<?>> constructor = clazz.getConstructor();\n");
+            classText.append("\t\t\tTLObject<?> instance = constructor.newInstance();\n");
+            classText.append("\t\t\treturn instance.deserialize(data);\n");
+            classText.append("\t\t} catch (IOException exception) {\n");
+            classText.append("\t\t\tSystem.err.println(\"Failed to read a TLObject id!\");\n");
+            classText.append("\t\t\terror = exception;\n");
+            classText.append("\t\t} catch (NoSuchMethodException exception) {\n");
+            classText.append("\t\t\tSystem.err.println(\"Failed to find a constructor for TLObject: \" + id);\n");
+            classText.append("\t\t\terror = exception;\n");
+            classText.append("\t\t} catch (InstantiationException exception) {\n");
+            classText.append("\t\t\tSystem.err.println(\"Failed to instantiate of abstract TLObject: \" + clazz.toString());\n");
+            classText.append("\t\t\terror = exception;\n");
+            classText.append("\t\t} catch (IllegalAccessException| InvocationTargetException exception) {\n");
+            classText.append("\t\t\tSystem.err.println(\"Failed to create a new instance of: \" + clazz.toString());\n");
+            classText.append("\t\t\terror = exception;\n");
+            classText.append("\t\t}\n\n");
+            classText.append("\t\terror.printStackTrace(System.err);\n");
+            classText.append("\t\treturn null;\n");
+            classText.append("\t}\n\n");
+            classText.append("\t@Nullable @SuppressWarnings(\"unchecked\")\n");
+            classText.append("\tpublic static <T extends TLObject<?>> T deserializeObject(Class<? super T> clazz, DataInputStream data) {\n");
+            classText.append("\t\tTLObject<?> tlObject = deserializeObject(data);\n\n");
+            classText.append("\t\tif (tlObject != null && tlObject.getClass() == clazz) {\n");
+            classText.append("\t\t\treturn (T) tlObject;\n");
+            classText.append("\t\t}\n\n");
+            classText.append("\t\treturn null;\n");
+            classText.append("\t}\n");
             classText.append("\n}");
 
             FileUtils.writeToPath(classText.toString(), cache, filePath);
@@ -134,7 +197,7 @@ public class ParsedTLObject {
 
 
     public boolean extendsAbstractClass() {
-        return id != 0x1CB5C415 && !getClassName(getName()).toLowerCase().equals(getClassName(getReturnType()).toLowerCase());
+        return !isVector() && !getClassName(getName()).toLowerCase().equals(getClassName(getReturnType()).toLowerCase());
     }
     public boolean isAbstractClass(Collection<ParsedTLObject> values) {
         if (isExtended == null) {
@@ -169,20 +232,26 @@ public class ParsedTLObject {
         }
 
         classText.append(" deserialize(DataInputStream data) {\n");
-        for (ParamPair param : params) {
-            param.addDeserializationLogic(classText);
+        if (params.size() > 0) {
+            for (ParamPair param : params) {
+                param.addDeserializationLogic(classText);
+            }
+            classText.append("\n");
         }
-        classText.append("\n\t\treturn ");
+        classText.append("\t\treturn ");
         if (isAbstract) classText.append("(T) ");
         classText.append("this;\n\t}");
     }
     public void addSerializationLogic(StringBuilder classText) {
         classText.append("\t@Override\n");
         classText.append("\tpublic DataOutputStream serialize(DataOutputStream data) {\n");
-        for (ParamPair param : params) {
-            param.addSerializationLogic(classText, params);
+        if (params.size() > 0) {
+            for (ParamPair param : params) {
+                param.addSerializationLogic(classText, params);
+            }
+            classText.append("\n");
         }
-        classText.append("\n\t\treturn data;\n\t}");
+        classText.append("\t\treturn data;\n\t}");
     }
 
     private static Path getClassFilePath(Path root, String input) {
@@ -241,6 +310,9 @@ public class ParsedTLObject {
         }
     }
 
+    public boolean isVector() {
+        return id == 0x1CB5C415;
+    }
 
     public String getHexID() {
         return "0x" + Integer.toHexString(id).toUpperCase();
@@ -259,7 +331,7 @@ public class ParsedTLObject {
     }
 
     public String getName() {
-        if (id == 0x1CB5C415) return "Vector";
+        if (isVector()) return "Vector";
         return name;
     }
 }
