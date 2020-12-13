@@ -4,10 +4,12 @@ import com.google.common.base.CaseFormat;
 import com.google.gson.JsonObject;
 import lombok.Builder;
 import lombok.Getter;
+import lombok.Setter;
 import lombok.Singular;
 import morningsage.telecraft.data.utils.FileUtils;
 import net.minecraft.data.DataCache;
 import org.apache.commons.lang3.StringUtils;
+import org.jetbrains.annotations.Nullable;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,12 +22,15 @@ public class ParsedTLObject {
     @Getter private final int id;
     @Getter private final String returnType;
     @Singular() private final List<ParamPair> params;
+    @Nullable private Boolean isExtended;
 
     @Getter private final TLType collectionType;
     @Getter private final JsonObject rawData;
 
     final List<String> imports = new ArrayList<String>() {{
         add("lombok.Getter;");
+        add("java.io.DataInputStream;");
+        add("java.io.DataOutputStream;");
     }};
 
     public static Builder builder(TLType collectionType, JsonObject rawData) {
@@ -74,6 +79,10 @@ public class ParsedTLObject {
         for (ParamPair param : params) {
             param.declareParam(classText, classPath, className);
         }
+        classText.append("\n");
+        addDeserializationLogic(classText, values);
+        classText.append("\n\n");
+        addSerializationLogic(classText);
         classText.append("\n}");
 
         FileUtils.writeToPath(classText.toString(), cache, getClassFilePath(parent, getName()));
@@ -101,7 +110,6 @@ public class ParsedTLObject {
             FileUtils.writeToPath(classText.toString(), cache, filePath);
         }
     }
-
     public static void createAbstractTL(Path parent, DataCache cache) {
         final Path filePath = getClassFilePath(parent, "TLObject");
 
@@ -109,9 +117,12 @@ public class ParsedTLObject {
             final StringBuilder classText = new StringBuilder();
 
             classText.append("package morningsage.telecraft.tlobjects;\n\n");
-            classText.append("public abstract class TLObject<T extends TLObject<T>> {\n");
-            classText.append("\tpublic abstract T deserialize();\n");
-            classText.append("\tpublic abstract byte[] serialize();\n");
+            classText.append("import java.io.DataInputStream;\n");
+            classText.append("import java.io.DataOutputStream;\n");
+            classText.append("\npublic abstract class TLObject<T extends TLObject<T>> {\n");
+            classText.append("\tpublic abstract T deserialize(DataInputStream data);\n");
+            classText.append("\tpublic abstract DataOutputStream serialize(DataOutputStream data);\n");
+            classText.append("\tpublic static <TLOBJECT extends TLObject<TLOBJECT>> TLOBJECT asdf(Class<? super TLOBJECT> clazz, DataInputStream data) {\n\n\t}");
 
             classText.append("\n}");
 
@@ -124,18 +135,52 @@ public class ParsedTLObject {
         return id != 0x1CB5C415 && !getClassName(getName()).toLowerCase().equals(getClassName(getReturnType()).toLowerCase());
     }
     public boolean isAbstractClass(Collection<ParsedTLObject> values) {
-        String safeClassName = getName().toLowerCase();
+        if (isExtended == null) {
+            String safeClassName = getClassName(getName()).toLowerCase();
 
-        // If cache this value, but we will only only need this once...
-
-        for (ParsedTLObject object : values) {
-            if (object.getCollectionType() == TLType.METHOD || !object.extendsAbstractClass()) continue;
-            if (object.getReturnType().toLowerCase().equals(safeClassName)) {
-                return true;
+            for (ParsedTLObject object : values) {
+                if (object.getCollectionType() == TLType.METHOD || !object.extendsAbstractClass()) continue;
+                if (object.getReturnType().toLowerCase().equals(safeClassName)) {
+                    isExtended = true;
+                    break;
+                }
             }
+
+            if (isExtended == null) isExtended = false;
         }
 
-        return false;
+        return isExtended;
+    }
+
+    public void addDeserializationLogic(StringBuilder classText, Collection<ParsedTLObject> values) {
+        boolean isAbstract = isAbstractClass(values);
+
+        if (isAbstract && params.size() < 1) return;
+
+        classText.append("\t@Override\n");
+        classText.append("\tpublic ");
+
+        if (isAbstract) {
+            classText.append("T");
+        } else {
+            classText.append(getClassName(getName()));
+        }
+
+        classText.append(" deserialize(DataInputStream data) {\n");
+        for (ParamPair param : params) {
+            param.addDeserializationLogic(classText);
+        }
+        classText.append("\n\t\treturn ");
+        if (isAbstract) classText.append("(T) ");
+        classText.append("this;\n\t}");
+    }
+    public void addSerializationLogic(StringBuilder classText) {
+        classText.append("\t@Override\n");
+        classText.append("\tpublic DataOutputStream serialize(DataOutputStream data) {\n");
+        for (ParamPair param : params) {
+            param.addSerializationLogic(classText, params);
+        }
+        classText.append("\n\t\treturn data;\n\t}");
     }
 
     private static Path getClassFilePath(Path root, String input) {

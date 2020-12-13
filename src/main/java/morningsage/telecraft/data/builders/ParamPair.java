@@ -69,6 +69,15 @@ public class ParamPair {
         );
     }
 
+    public void addDeserializationLogic(StringBuilder classText) {
+        if (getName().equals("flags")) return;
+        classText.append("\t\t// ToDo: ").append(this).append("\n");
+    }
+    public void addSerializationLogic(StringBuilder classText, List<ParamPair> allParams) {
+        if (getType().startsWith("flag")) return;
+        classText.append("\t\t// ToDo: ").append(this).append("\n");
+    }
+
     public List<String> getTypeString(boolean forImport, String classPackage, String parentClassName) {
         return getTypeStringInternal(getType(), forImport, classPackage, parentClassName);
     }
