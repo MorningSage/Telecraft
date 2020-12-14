@@ -4,22 +4,16 @@ import com.google.common.base.CaseFormat;
 import com.google.gson.JsonObject;
 import lombok.Builder;
 import lombok.Getter;
-import lombok.Setter;
 import lombok.Singular;
 import morningsage.telecraft.data.utils.FileUtils;
 import net.minecraft.data.DataCache;
 import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.Nullable;
-import org.reflections.Reflections;
 
-import java.io.DataInputStream;
-import java.io.IOException;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -39,33 +33,49 @@ public class ParsedTLObject {
         add("lombok.Getter;");
         add("java.io.DataInputStream;");
         add("java.io.DataOutputStream;");
+        add("java.io.IOException;");
+        add("morningsage.telecraft.utils.StreamUtils;");
     }};
 
     public static Builder builder(TLType collectionType, JsonObject rawData) {
         return new Builder().collectionType(collectionType).rawData(rawData);
     }
 
-    public void saveAsClass(Path parent, DataCache cache, Collection<ParsedTLObject> values) {
+    public void saveAsClass(Path parent, DataCache cache, Collection<ParsedTLObject> values, String parentPackage) throws Exception {
+        if (getCollectionType() == TLType.METHOD) saveTLMethod(parent.resolve("methods"), cache, values, parentPackage + ".methods");
+        else if (getCollectionType() == TLType.CONSTRUCTOR) saveTLObject(parent.resolve("types"), cache, values, parentPackage + ".types");
+        else throw new Exception("Unknown TL Type");
+    }
+    private void saveTLMethod(Path parent, DataCache cache, Collection<ParsedTLObject> values, String parentPackage) {
+
+    }
+    private void saveTLObject(Path parent, DataCache cache, Collection<ParsedTLObject> values, String parentPackage) {
         final StringBuilder classText = new StringBuilder();
         final String classPath = getClassPackage(getName());
         final boolean hasExtends = extendsAbstractClass();
         final boolean isExtended = isAbstractClass(values);
         final String className = getClassName(getName());
-        if (hasExtends) saveAbstractClass(parent, cache);
-        
-        classText.append("package morningsage.telecraft.tlobjects");
+
+        final Function<String, String> qualifier = input -> parentPackage + "." + input;
+
+        if (hasExtends) saveAbstractClass(parent, cache, parentPackage);
+
+        classText.append("package ").append(parentPackage);
         if (classPath.length() > 0) classText.append(".").append(classPath);
         classText.append(";\n\n");
         if (classPath.length() > 0 && !hasExtends) {
-            imports.add("morningsage.telecraft.tlobjects.TLObject;");
+            imports.add(qualifier.apply("TLObject;"));
         }
         for (ParamPair param : params) {
-            param.provideImports(imports, classPath, className);
+            param.provideImports(imports, classPath, className, qualifier);
         }
         Collections.sort(imports);
+        boolean hasOptional = false;
         for (String importLine : imports) {
+            if (importLine.contains("Optional")) hasOptional = true;
             classText.append("import ").append(importLine).append("\n");
         }
+        if (hasOptional) classText.append("\n@SuppressWarnings(\"OptionalUsedAsFieldOrParameterType\")");
         classText.append("\npublic class ").append(className);
         if (isVector()) classText.append("<T>");
         if (isExtended) classText.append("<T extends ").append(className).append("<T>>");
@@ -84,29 +94,28 @@ public class ParsedTLObject {
         classText.append(" {\n\t@Getter private static final int ID = ").append(getHexID()).append(";\n\n");
         if (params.size() > 0) {
             for (ParamPair param : params) {
-                param.declareParam(classText, classPath, className, values);
+                param.declareParam(classText, classPath, className, values, qualifier);
             }
             classText.append("\n");
         }
-        addDeserializationLogic(classText, values);
+        addDeserializationLogic(classText, classPath, className, values, qualifier);
         classText.append("\n\n");
         addSerializationLogic(classText);
         classText.append("\n}");
 
         FileUtils.writeToPath(classText.toString(), cache, getClassFilePath(parent, getName()));
     }
-
-    public void saveAbstractClass(Path parent, DataCache cache) {
+    public void saveAbstractClass(Path parent, DataCache cache, String parentPackage) {
         final Path filePath = getClassFilePath(parent, returnType);
 
         if (!Files.exists(filePath)) {
             final StringBuilder classText = new StringBuilder();
             final String classPath = getClassPackage(returnType);
 
-            classText.append("package morningsage.telecraft.tlobjects");
+            classText.append("package ").append(parentPackage);
             if (!classPath.equals("")) {
                 classText.append(".").append(classPath).append(";\n\n");
-                classText.append("import morningsage.telecraft.tlobjects.TLObject");
+                classText.append("import ").append(parentPackage).append(".TLObject");
             }
             classText.append(";\n\n");
             classText.append("public abstract class ")
@@ -118,13 +127,17 @@ public class ParsedTLObject {
             FileUtils.writeToPath(classText.toString(), cache, filePath);
         }
     }
-    public static void createAbstractTL(Path parent, DataCache cache) {
+
+    public static void createAbstractClasses(Path parent, DataCache cache, String parentPackage) {
+        createAbstractTL(parent.resolve("types"), cache, parentPackage + ".types");
+    }
+    private static void createAbstractTL(Path parent, DataCache cache, String parentPackage) {
         final Path filePath = getClassFilePath(parent, "TLObject");
 
         if (!Files.exists(filePath)) {
             final StringBuilder classText = new StringBuilder();
 
-            classText.append("package morningsage.telecraft.tlobjects;\n\n");
+            classText.append("package ").append(parentPackage).append(";\n\n");
             classText.append("import org.reflections.Reflections;\n");
             classText.append("import java.io.DataInputStream;\n");
             classText.append("import java.io.DataOutputStream;\n");
@@ -137,12 +150,14 @@ public class ParsedTLObject {
             classText.append("import javax.annotation.Nullable;\n\n");
             classText.append("public abstract class TLObject<T extends TLObject<T>> {\n");
             classText.append("\tprivate static final HashMap<Integer, Class<?>> ID_MAP = new HashMap<>();\n\n");
-            classText.append("\tpublic abstract T deserialize(DataInputStream data);\n");
+            classText.append("\tpublic abstract T deserialize(DataInputStream data) throws IOException;\n");
             classText.append("\tpublic abstract DataOutputStream serialize(DataOutputStream data);\n\n");
             classText.append("\tprivate static void refreshObjectMap() {\n");
             classText.append("\t\tID_MAP.clear();\n\n");
             classText.append("\t\t@SuppressWarnings(\"rawtypes\")\n");
-            classText.append("\t\tSet<Class<? extends TLObject>> subTypes = new Reflections(\"morningsage.telecraft.tlobjects\").getSubTypesOf(TLObject.class);\n\n");
+            classText.append("\t\tSet<Class<? extends TLObject>> subTypes = new Reflections(\"");
+            classText.append(parentPackage);
+            classText.append("\").getSubTypesOf(TLObject.class);\n\n");
             classText.append("\t\tfor (Class<?> clazz : subTypes) {\n");
             classText.append("\t\t\ttry {\n");
             classText.append("\t\t\t\tfor (Method method : clazz.getMethods()) {\n");
@@ -217,7 +232,7 @@ public class ParsedTLObject {
         return isExtended;
     }
 
-    public void addDeserializationLogic(StringBuilder classText, Collection<ParsedTLObject> values) {
+    public void addDeserializationLogic(StringBuilder classText, String classPackage, String parentClassName, Collection<ParsedTLObject> values, Function<String, String> qualifier) {
         boolean isAbstract = isAbstractClass(values);
 
         if (isAbstract && params.size() < 1) return;
@@ -231,10 +246,10 @@ public class ParsedTLObject {
             classText.append(getClassName(getName()));
         }
 
-        classText.append(" deserialize(DataInputStream data) {\n");
+        classText.append(" deserialize(DataInputStream data) throws IOException {\n");
         if (params.size() > 0) {
             for (ParamPair param : params) {
-                param.addDeserializationLogic(classText);
+                param.addDeserializationLogic(classText, classPackage, parentClassName, qualifier);
             }
             classText.append("\n");
         }

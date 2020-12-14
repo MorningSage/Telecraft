@@ -1,12 +1,9 @@
 package morningsage.telecraft.network.connection.protocols;
 
-import com.sun.xml.internal.ws.util.ByteArrayBuffer;
 import lombok.Getter;
 import morningsage.telecraft.utils.CrcUtils;
 
-import java.io.ByteArrayInputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
+import java.io.*;
 
 public final class FullImpl implements ProtocolImpl {
     @Getter private int sequenceNumber = 0;
@@ -20,8 +17,8 @@ public final class FullImpl implements ProtocolImpl {
 
     @Override
     public byte[] wrapPayload(byte[] payload) {
-        ByteArrayBuffer byteArrayBuffer = new ByteArrayBuffer(payload.length + 12);
-        DataOutputStream stream = new DataOutputStream(byteArrayBuffer);
+        ByteArrayOutputStream byteStream = new ByteArrayOutputStream(payload.length + 12);
+        DataOutputStream stream = new DataOutputStream(byteStream);
 
         try {
             // payload Length + overhead
@@ -29,7 +26,7 @@ public final class FullImpl implements ProtocolImpl {
             stream.write(sequenceNumber);
             stream.write(payload);
             // CRC should include length, sequence number, and payload
-            stream.write(CrcUtils.computeHash(byteArrayBuffer.getRawData(), 0, payload.length + 8));
+            stream.write(CrcUtils.computeHash(byteStream.toByteArray(), 0, payload.length + 8));
 
             // Always increment sequence number
             sequenceNumber = sequenceNumber + 1;
@@ -40,13 +37,13 @@ public final class FullImpl implements ProtocolImpl {
             });
         }
 
-        return byteArrayBuffer.getRawData();
+        return byteStream.toByteArray();
     }
 
     @Override
     public byte[] unwrapPayload(byte[] payload) {
         DataInputStream stream = new DataInputStream(new ByteArrayInputStream(payload));
-        ByteArrayBuffer byteArrayBuffer;
+        byte[] internalPayload;
 
         try {
             if (payload.length < 12) throw new Exception("Payload has invalid size");
@@ -57,9 +54,9 @@ public final class FullImpl implements ProtocolImpl {
             int sequenceNumber = stream.readInt();
             if (sequenceNumber != this.sequenceNumber) throw new Exception("Payload contains invalid sequence number");
 
-            byteArrayBuffer = new ByteArrayBuffer(length);
-            if (stream.read(byteArrayBuffer.getRawData(), 0, byteArrayBuffer.size()) != byteArrayBuffer.size()) {
-                throw new Exception("Unable to read " + byteArrayBuffer.size() + "bytes from the payload");
+            internalPayload = new byte[length];
+            if (stream.read(internalPayload, 0, length) != length) {
+                throw new Exception("Unable to read " + length + "bytes from the payload");
             }
 
             int crc = stream.readInt();
@@ -67,7 +64,7 @@ public final class FullImpl implements ProtocolImpl {
                 throw new Exception("Payload hash mismatch");
             }
 
-            return byteArrayBuffer.getRawData();
+            return internalPayload;
         } catch (Exception exception) {
             logToConsole(logger -> {
                 logger.severe("Failed to unwrap payload");
@@ -76,5 +73,43 @@ public final class FullImpl implements ProtocolImpl {
         }
 
         return new byte[0];
+    }
+
+    @Override
+    public byte[] unwrapStream(InputStream stream) {
+        DataInputStream dataStream = new DataInputStream(stream);
+        byte[] payload;
+
+        try {
+            int length = dataStream.readInt();
+            if (length < 12) throw new Exception("Invalid length in payload");
+
+            int sequenceNumber = dataStream.readInt();
+            if (sequenceNumber != this.sequenceNumber) throw new Exception("Payload contains invalid sequence number");
+
+            payload = new byte[length];
+            if (stream.read(payload, 0, payload.length) != length) {
+                throw new Exception("Unable to read " + length + "bytes from the payload");
+            }
+
+            //int crc = dataStream.readInt();
+            //if (CrcUtils.computeHash(payload, 0, length + 8) != crc) {
+            //    throw new Exception("Payload hash mismatch");
+            //}
+
+            return payload;
+        } catch (Exception exception) {
+            logToConsole(logger -> {
+                logger.severe("Failed to unwrap payload");
+                logger.severe(exception.getMessage());
+            });
+        }
+
+        return new byte[0];
+    }
+
+    @Override
+    public void reset() {
+        sequenceNumber = 0;
     }
 }

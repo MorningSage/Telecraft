@@ -15,6 +15,7 @@ import net.minecraft.data.DataProvider;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Hashtable;
+import java.util.Optional;
 
 import static morningsage.telecraft.data.parsers.CollectionParser.parseCollection;
 
@@ -47,17 +48,22 @@ public class TLParser implements DataProvider {
     }
 
     private static void createObjectFiles(Path path, DataCache cache) {
+        final String parentPackage = "morningsage.telecraft.tlobjects";
+
         for (ParsedTLObject tlObject : TL_OBJECTS.values()) {
-            if (tlObject.getCollectionType() == TLType.CONSTRUCTOR) {
-                try {
-                    tlObject.saveAsClass(path, cache, TL_OBJECTS.values());
-                } catch (Exception exception) {
-                    Generator.LOGGER.error("Failed to create class", exception);
-                }
+            //if (tlObject.getCollectionType() == TLType.CONSTRUCTOR) {
+            try {
+                tlObject.saveAsClass(
+                    path, cache, TL_OBJECTS.values(),
+                    parentPackage
+                );
+            } catch (Exception exception) {
+                Generator.LOGGER.error("Failed to create class", exception);
             }
+            //}
         }
 
-        ParsedTLObject.createAbstractTL(path, cache);
+        ParsedTLObject.createAbstractClasses(path, cache, parentPackage);
     }
 
     private static void addParsedObject(ParsedTLObject tlObject) {

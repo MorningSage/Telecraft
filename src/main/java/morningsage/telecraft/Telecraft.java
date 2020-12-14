@@ -1,8 +1,11 @@
 package morningsage.telecraft;
 
 import morningsage.telecraft.data.Generator;
-import morningsage.telecraft.tlobjects.TLObject;
-import morningsage.telecraft.tlobjects.WebPage;
+import morningsage.telecraft.network.connection.events.TransportEventHub;
+import morningsage.telecraft.network.connection.protocols.TransportProtocol;
+import morningsage.telecraft.network.connection.transports.TCPImpl;
+import morningsage.telecraft.network.connection.transports.TransportImpl;
+import morningsage.telecraft.network.connection.transports.Transports;
 import morningsage.telecraft.utils.ByteUtils;
 import net.fabricmc.api.ClientModInitializer;
 
@@ -11,7 +14,20 @@ public class Telecraft implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
-		WebPage<?> asdf = TLObject.deserializeObject(WebPage.class, ByteUtils.forReading(new byte[] {(byte) 0xE8, (byte) 0x9C, 0x45, (byte) 0xB2}));
+		TransportImpl asdf = Transports.TCP.create();
+
+		TransportEventHub.EXCEPTION_EVENT.register(exception -> {
+			System.out.println(exception.getMessage());
+		});
+
+		TransportEventHub.DATA_RECEIVED_EVENT.register(payload -> {
+			System.out.println("got payload");
+		});
+
+		//asdf.connect("149.154.175.55", 443, false, 1);
+
+
+		//WebPage<?> asdf = TLObject.deserializeObject(WebPage.class, ByteUtils.forReading(new byte[] {(byte) 0xE8, (byte) 0x9C, 0x45, (byte) 0xB2}));
 
 		Generator.generate();
 	}

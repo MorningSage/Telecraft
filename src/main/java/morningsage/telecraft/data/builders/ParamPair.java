@@ -6,6 +6,8 @@ import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -16,14 +18,15 @@ public class ParamPair {
 
     private static final String SETTER_IMPORT = "lombok.Setter;";
     private static final String BIGINT_IMPORT = "java.math.BigInteger;";
+    private static final String OPTIONAL_IMPORT = "java.util.Optional;";
     private static final String[] IGNORED_IMPORTS = {
         "string", "flags.", "int", "byte[]", "long", "true", "boolean"
     };
-    //private static final Pattern FLAGS_TYPE = Pattern.compile("flags\\.(\\d)\\?true", Pattern.CASE_INSENSITIVE);
+    private static final Pattern FLAGS_TYPE = Pattern.compile("flags\\.(\\d)\\?true", Pattern.CASE_INSENSITIVE);
 
-    public void provideImports(List<String> imports, String classPackage, String parentClassName) {
-        // Ignore the flag variable
-        if (getName().equals("flags")) return;
+    public void provideImports(List<String> imports, String classPackage, String parentClassName, Function<String, String> qualifier) {
+        // In the presence of flags, we use Optional<T>
+        if (getName().equals("flags") && !imports.contains(OPTIONAL_IMPORT)) imports.add(OPTIONAL_IMPORT);
 
         // At this point, there will be a property, and we'll need the Setter imported
         if (!imports.contains(SETTER_IMPORT)) imports.add(SETTER_IMPORT);
@@ -38,12 +41,24 @@ public class ParamPair {
          * Type<package.Type>
          */
 
+        // A list of types used for this param
+        List<String> typeStrings = getTypeString(true, classPackage, parentClassName, qualifier);
+
+        // TLObject needs to be imported if not local for deserializing if a class is part of Telegram
+        if (typeStrings.size() > 0 && !classPackage.equals("")) {
+            List<String> tlobjectImports = getTypeStringInternal("TLObject", true, classPackage, parentClassName, qualifier);
+            if (tlobjectImports.size() > 0) {
+                String tlobjectImport = tlobjectImports.get(0) + ";";
+                if (!imports.contains(tlobjectImport)) imports.add(tlobjectImport);
+            }
+        }
+
         // Loop through the different parts
-        for (String part : getTypeString(true, classPackage, parentClassName)) {
+        for (String part : typeStrings) {
             // Only for case insensitive checks
             final String typeClassName = ParsedTLObject.getClassName(part);
 
-            // Only import if qualified and the classes are not the same
+            // Only import if qualified the classes are not the same
             if (part.startsWith("morningsage") && !typeClassName.equals(parentClassName)) {
                 part = part + ";";
                 if (!imports.contains(part)) imports.add(part);
@@ -57,11 +72,8 @@ public class ParamPair {
         }
     }
 
-    public void declareParam(StringBuilder classText, String classPackage, String parentClassName, Collection<ParsedTLObject> values) {
-        // No access to flags directly
-        if (getName().equals("flags")) return;
-
-        String typeString = getTypeString(false, classPackage, parentClassName).get(0);
+    public void declareParam(StringBuilder classText, String classPackage, String parentClassName, Collection<ParsedTLObject> values, Function<String, String> qualifier) {
+        String typeString = getTypeString(false, classPackage, parentClassName, qualifier).get(0);
 
         // ToDo: determine if raw and append "<?>" if necessary
 
@@ -73,26 +85,101 @@ public class ParamPair {
         );
     }
 
-    public void addDeserializationLogic(StringBuilder classText) {
-        if (getName().equals("flags")) return;
-        classText.append("\t\t// ToDo: ").append(this).append("\n");
+    public void addDeserializationLogic(StringBuilder classText, String classPackage, String parentClassName, Function<String, String> qualifier) {
+        String type = getType(false).toLowerCase();
+        String printableName = ParsedTLObject.getFieldName(getName());
+
+        classText.append("\t\tthis.");
+
+        if (type.startsWith("flags.")) {
+            int i = Integer.parseInt(type.substring(6, type.indexOf("?")));
+
+            if (type.endsWith("true")) {
+                classText.append(printableName).append(" = (flags & ").append((int) Math.pow(2, i)).append(") != 0;\n");
+                return;
+            }
+
+            classText.append(printableName).append(" = (flags & ").append((int) Math.pow(2, i)).append(") == 0 ? ").append(getDefaultValueCode()).append(" : ").append(getAssignmentCode(classPackage, parentClassName, qualifier)).append(";\n");
+            return;
+        }
+
+        classText.append(printableName).append(" = ").append(getAssignmentCode(classPackage, parentClassName, qualifier)).append(";\n");
     }
+    private String getAssignmentCode(String classPackage, String parentClassName, Function<String, String> qualifier) {
+        String typeString = getTypeString(false, classPackage, parentClassName, qualifier).get(0);
+        return getAssignmentCode(typeString);
+    }
+    private String getAssignmentCode(String typeString) {
+        switch (typeString) {
+            case "boolean":
+                return "StreamUtils.readBoolean(data)";
+            case "int":
+            case "Integer":
+                return "data.readInt()";
+            case "String":
+                return "StreamUtils.readString(data)";
+            case "long":
+                return "data.readLong()";
+            case "byte[]":
+                return "StreamUtils.readBytes(data)";
+            default:
+                if (typeString.startsWith("Optional") || typeString.startsWith("Vector")) {
+                    String type1 = typeString.substring(0, typeString.indexOf("<"));
+                    String type2 = typeString.substring(typeString.indexOf("<") + 1, typeString.lastIndexOf(">"));
+                    String assignment = getAssignmentCode(type2);
+
+                    if (assignment.startsWith("TLObject")) {
+                        return type1 + ".ofNullable(" + assignment + ")";
+                    } else {
+                        return type1 + ".of(" + assignment + ")";
+                    }
+                }
+        }
+
+        return "TLObject.deserializeObject(" + typeString + ".class, data)";
+    }
+    private String getDefaultValueCode() {
+        String typeString = getTypeString(false, "", "", s -> s).get(0);
+
+        switch (typeString) {
+            case "boolean":
+                return "false";
+            case "int":
+            case "Integer":
+            case "long":
+                return "-1";
+            case "String":
+                return "\"\"";
+            case "byte[]":
+                return "new byte[0]";
+            default:
+                if (typeString.startsWith("Optional") || typeString.startsWith("Vector")) {
+                    return typeString.substring(0, typeString.indexOf("<")) + ".empty()";
+                }
+        }
+
+        return "null";
+    }
+
     public void addSerializationLogic(StringBuilder classText, List<ParamPair> allParams) {
         if (getType().startsWith("flag")) return;
+
+
+
         classText.append("\t\t// ToDo: ").append(this).append("\n");
     }
 
-    public List<String> getTypeString(boolean forImport, String classPackage, String parentClassName) {
-        return getTypeStringInternal(getType(), forImport, classPackage, parentClassName);
+    public List<String> getTypeString(boolean forImport, String classPackage, String parentClassName, Function<String, String> qualifier) {
+        return getTypeStringInternal(getType(), forImport, classPackage, parentClassName, qualifier);
     }
 
-    private List<String> getTypeStringInternal(String input, boolean forImport, String parentClassPackage, String parentClassName) {
+    private List<String> getTypeStringInternal(String input, boolean forImport, String parentClassPackage, String parentClassName, Function<String, String> qualifier) {
         // Only for case insensitive checks
         final String safeType = input.toLowerCase();
         final List<String> returns = new ArrayList<>();
 
         // Special check for boolean flag values
-        if (safeType.equals("true")) {
+        if (safeType.equals("optional<true>")) {
             // Replace with the boolean type
             returns.add("boolean");
             // Return early
@@ -104,39 +191,42 @@ public class ParamPair {
          * on if we are importing the class or declaring a field.
          */
 
-        // If this is a vector, we handle differently
-        if (safeType.startsWith("vector<")) {
+        // If this has a generic type, handle slightly differently
+        if (safeType.startsWith("vector<") || safeType.startsWith("optional<")) {
+            // Capture the Vector or Optional
+            String type = input.substring(0, input.indexOf("<"));
+
             // Remove that part of the type
-            input = input.substring(7, input.lastIndexOf(">"));
+            input = input.substring(input.indexOf("<") + 1, input.lastIndexOf(">"));
 
-            // Get these types individually so we can figure out what to do with them
-            List<String> vectorType = getTypeStringInternal("Vector", forImport, parentClassPackage, parentClassName);
-            List<String> genericType = getTypeStringInternal(input, forImport, parentClassPackage, parentClassName);
+            // Determine the qualified type if it's part of telegram
+            if (!type.toLowerCase().equals("optional")) {
+                type = getSafeType(type, forImport, parentClassPackage, parentClassName, qualifier);
+            }
 
-            // Sanity Check default to expected values
-            if (vectorType.size() < 1) vectorType.add("Vector");
-            if (genericType.size() < 1) genericType.add(input);
+            // Determine the qualified generic
+            input = getSafeType(input, forImport, parentClassPackage, parentClassName, qualifier);
 
             // Determine what exactly to return
             if (forImport) {
-                // For importing we need both types
-                returns.add(vectorType.get(0));
-                returns.add(genericType.get(0));
+                // For importing we may need both types
+                if (!type.toLowerCase().equals("optional")) returns.add(type);
+                returns.add(input);
             } else {
                 // When declaring, we just combine them again
-                returns.add(vectorType.get(0) + "<" + genericType.get(0) + ">");
+                returns.add(type + "<" + input + ">");
             }
 
             // return early
             return returns;
         }
 
-        // Flagged fields contain their type
+        // Flagged/Optional fields contain their type
         if (safeType.startsWith("flags.")) {
             // Remove the flag info as it's not needed for the type
             input = input.substring(input.indexOf("?") + 1);
             // Recursive call to process the remaining bit
-            returns.addAll(getTypeStringInternal(input, forImport, parentClassPackage, parentClassName));
+            returns.addAll(getTypeStringInternal(input, forImport, parentClassPackage, parentClassName, qualifier));
             // Return early
             return returns;
         }
@@ -194,7 +284,7 @@ public class ParamPair {
              */
 
             // Add the qualified type
-            returns.add("morningsage.telecraft.tlobjects." + input);
+            returns.add(qualifier.apply(input));
             // Return early
             return returns;
         }
@@ -218,13 +308,22 @@ public class ParamPair {
 
         if (forImport) {
             // Add the qualified type
-            returns.add("morningsage.telecraft.tlobjects." + input);
+            returns.add(qualifier.apply(input));
         } else {
             // Add the NON qualified type
             returns.add(typeClassName);
         }
 
         return returns;
+    }
+
+    private String getSafeType(String input, boolean forImport, String parentClassPackage, String parentClassName, Function<String, String> qualifier) {
+        // Get this type individually so we can figure out what to do with it
+        List<String> qualifiedType = getTypeStringInternal(input, forImport, parentClassPackage, parentClassName, qualifier);
+        // Replace with the correct one if we found it
+        if (qualifiedType.size() > 0) input = qualifiedType.get(0);
+        // Return what was passed or the new value
+        return input;
     }
 
     public String getName() {
@@ -262,12 +361,19 @@ public class ParamPair {
         formattedType = formattedType.replace("JSONObjectValue", "JsonObjectValue");
         // There's no such thing as bytes...
         formattedType = formattedType.replace("bytes", "byte[]");
-        // Generics (Vector<T> in this case) must be Objects and primitives are not Objects
+        // Generics (Vector<T> or Optional<T> in this case) must be Objects and primitives are not Objects
         formattedType = formattedType.replace("<long>", "<Long>");
         formattedType = formattedType.replace("<int>", "<Integer>");
+        formattedType = formattedType.replace("?int", "?Integer");
+        formattedType = formattedType.replace("?long", "?Long");
         // Using BigIntegers for now, but that may change
         formattedType = formattedType.replace("int128", "BigInteger");
         formattedType = formattedType.replace("int256", "BigInteger");
+
+        // For Optional/Flag types, we need a bit more handling...
+        if (formattedType.startsWith("flags.")) {
+            formattedType = "Optional<" + formattedType.substring(formattedType.indexOf("?") + 1) + ">";
+        }
 
         formattedType = ParsedTLObject.formatSnakeGenerics(formattedType);
 

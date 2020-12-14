@@ -4,8 +4,10 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.ToString;
 
+import java.util.function.Supplier;
+
 @RequiredArgsConstructor @ToString
-public enum TransportProtocol implements ProtocolImpl {
+public enum TransportProtocol {
     /**
      * The lightest protocol available.
      *
@@ -16,7 +18,7 @@ public enum TransportProtocol implements ProtocolImpl {
      * For more information, see:
      * https://core.telegram.org/mtproto/mtproto-transports#abridged
      */
-    ABRIDGED("Abridged", new AbridgedImpl()),
+    ABRIDGED("Abridged", AbridgedImpl::new),
     /**
      * In case 4-byte data alignment is needed, an intermediate version of the original protocol may be used.
      *
@@ -27,7 +29,7 @@ public enum TransportProtocol implements ProtocolImpl {
      * For more information, see:
      * https://core.telegram.org/mtproto/mtproto-transports#intermediate
      */
-    INTERMEDIATE("Intermediate", new IntermediateImpl()),
+    INTERMEDIATE("Intermediate", IntermediateImpl::new),
     /**
      * Padded version of the intermediate protocol, to use with obfuscation enabled to bypass ISP blocks.
      *
@@ -38,7 +40,7 @@ public enum TransportProtocol implements ProtocolImpl {
      * For more information, see:
      * https://core.telegram.org/mtproto/mtproto-transports#padded-intermediate
      */
-    PADDED_INTERMEDIATE("Padded Intermediate", new PaddedIntermediateImpl()),
+    PADDED_INTERMEDIATE("Padded Intermediate", PaddedIntermediateImpl::new),
     /**
      * The basic MTProto transport protocol
      *
@@ -49,18 +51,12 @@ public enum TransportProtocol implements ProtocolImpl {
      * For more information, see:
      * https://core.telegram.org/mtproto/mtproto-transports#full
      */
-    FULL("Full", new FullImpl());
+    FULL("Full", FullImpl::new);
 
     @Getter private final String name;
-    @Getter private final ProtocolImpl implementation;
+    @Getter private final Supplier<ProtocolImpl> implementationSupplier;
 
-    @Override
-    public byte[] wrapPayload(byte[] payload) {
-        return implementation.wrapPayload(payload);
-    }
-
-    @Override
-    public byte[] unwrapPayload(byte[] payload) {
-        return implementation.unwrapPayload(payload);
+    public ProtocolImpl create() {
+        return implementationSupplier.get();
     }
 }
